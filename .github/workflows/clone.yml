@@ -184,6 +184,9 @@ jobs:
             else
               echo "No CLONE_REG_PASSWORD secret - clones start with empty password"
             fi
+            # Neutralize tamper gates (package/label/cert/dex checks in
+            # MainActivity that crash any repackaged clone). See patch_gates.py.
+            python3 patch_gates.py work
             grep -q "com.dgd.createfbc${i}" work/AndroidManifest.xml
             python3 badge_icons.py --dir work --number "$i"
             apktool b work -o "clones/unsigned-${i}.apk" > /dev/null
