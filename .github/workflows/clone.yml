@@ -3,13 +3,14 @@ name: Build clones
 # Takes original.apk and produces 10 side-by-side installable clones:
 #   package com.dgd.createfb   -> com.dgd.createfbc1 ... com.dgd.createfbc10
 #   label   DGDcreateFB        -> DGDcreateFB 1 ... DGDcreateFB 10
+#   icon    royal-blue seal badge with the clone number (design B, circle-safe)
 # All clones share one signature so they install next to each other
 # (and next to the original) with no external cloner app.
 
 on:
   push:
     branches: ["master"]
-    paths: ["original.apk", ".github/workflows/clone.yml"]
+    paths: ["original.apk", "badge_icons.py", ".github/workflows/clone.yml"]
   workflow_dispatch:
 
 jobs:
@@ -147,6 +148,17 @@ jobs:
           PYEOF
           echo "patch script ready"
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Badge unit tests
+        run: |
+          pip install pillow
+          python3 -m py_compile badge_icons.py test_badge_icons.py
+          python3 -m unittest discover -s . -p "test_*.py" -v
+
       - name: Build 10 clones
         env:
           CLONE_REG_PASSWORD: ${{ secrets.CLONE_REG_PASSWORD }}
@@ -173,6 +185,7 @@ jobs:
               echo "No CLONE_REG_PASSWORD secret - clones start with empty password"
             fi
             grep -q "com.dgd.createfbc${i}" work/AndroidManifest.xml
+            python3 badge_icons.py --dir work --number "$i"
             apktool b work -o "clones/unsigned-${i}.apk" > /dev/null
             "$BT/zipalign" -f 4 "clones/unsigned-${i}.apk" "clones/aligned-${i}.apk"
             "$BT/apksigner" sign --ks "$KS" \
@@ -188,11 +201,26 @@ jobs:
           "$BT/aapt" dump badging clones/CreateFB-10.apk | head -n 2
           ls -lh clones/
 
+      - name: Render badge preview
+        run: |
+          rm -rf pvwork
+          apktool d -f -o pvwork original.apk > /dev/null
+          ICON=$(find pvwork/res -name ic_launcher.png | sort | tail -n 1)
+          echo "Base icon: $ICON"
+          python3 badge_icons.py --preview "$ICON" preview.png
+          ls -lh preview.png
+
       - name: Upload clones
         uses: actions/upload-artifact@v4
         with:
           name: clones
           path: clones/CreateFB-*.apk
+
+      - name: Upload badge preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: badge-preview
+          path: preview.png
 
       - name: Publish GitHub Release
         if: github.ref_type == 'branch' && github.event_name == 'push'
