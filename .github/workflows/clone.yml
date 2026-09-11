@@ -177,6 +177,14 @@ jobs:
             echo "=== Clone $i: com.dgd.createfbc${i} / DGDcreateFB ${i} ==="
             rm -rf work
             apktool d -f -o work original.apk > /dev/null
+            # Pin components to their real (unrenamed) classes: smali keeps
+            # package com.dgd.createfb, so relative names would resolve to
+            # the non-existent com.dgd.createfbcN.* after the rename below.
+            sed -i 's/android:name="\.LauncherActivity"/android:name="com.dgd.createfb.LauncherActivity"/' work/AndroidManifest.xml
+            sed -i 's/android:name="\.MainActivity"/android:name="com.dgd.createfb.MainActivity"/' work/AndroidManifest.xml
+            sed -i 's/android:name="\.OtpMonitorService"/android:name="com.dgd.createfb.OtpMonitorService"/' work/AndroidManifest.xml
+            grep -q 'android:name="com.dgd.createfb.LauncherActivity"' work/AndroidManifest.xml
+            grep -q 'android:name="com.dgd.createfb.MainActivity"' work/AndroidManifest.xml
             sed -i "s/package=\"com\.dgd\.createfb\"/package=\"com.dgd.createfbc${i}\"/" work/AndroidManifest.xml
             sed -i "s/DGDcreateFB/DGDcreateFB ${i}/g" work/AndroidManifest.xml
             if [ -n "$CLONE_REG_PASSWORD" ]; then
