@@ -32,9 +32,12 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install build-tools + apktool
+      - name: Install apktool
         run: |
-          sdkmanager "build-tools;36.0.0" --sdk_root=$ANDROID_HOME
+          # Runners already ship Android build-tools - use the newest present.
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)
+          echo "BT=$BT" >> "$GITHUB_ENV"
+          ls "$BT" | grep -E "^(apksigner|zipalign|aapt)$"
           sudo wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O /usr/local/bin/apktool
           sudo wget -q https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.11.1.jar -O /usr/local/bin/apktool.jar
           sudo chmod +x /usr/local/bin/apktool
@@ -62,7 +65,7 @@ jobs:
           CLONE_KEY_PASSWORD: ${{ secrets.CLONE_KEY_PASSWORD }}
         run: |
           set -e
-          BT="$ANDROID_HOME/build-tools/36.0.0"
+          BT="${BT%/}"
           KS="$RUNNER_TEMP/ks/clone.jks"
           : "${CLONE_KEYSTORE_PASSWORD:=android}"
           : "${CLONE_KEY_ALIAS:=clone}"
