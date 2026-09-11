@@ -58,8 +58,60 @@ jobs:
               -storepass android -keypass android -dname "CN=Clone"
           fi
 
+      - name: Write password pre-fill script
+        run: |
+          cat > "$RUNNER_TEMP/patch_pw.py" <<'PYEOF'
+          # Pre-fills the default for prefs.getString("KEY_REG_PASSWORD", <default>)
+          # so every fresh clone starts with the configured password already set.
+          import os, re, sys, pathlib
+          work = pathlib.Path(sys.argv[1])
+          pwd = os.environ.get("CLONE_REG_PASSWORD", "")
+          assert pwd, "CLONE_REG_PASSWORD is empty"
+          key_re = re.compile(r'\s*const-string\s+\S+,\s*"KEY_REG_PASSWORD"\s*$')
+          empty_re = re.compile(r'(\s*const-string\s+\S+,\s*)""(\s*)$')
+          null_re = re.compile(r'(\s*)const/4\s+(\S+),\s*0x0(\s*)$')
+          changed = []
+          for sm in work.rglob("*.smali"):
+              lines = sm.read_text().splitlines(keepends=True)
+              dirty = False
+              for i, ln in enumerate(lines):
+                  if not key_re.match(ln):
+                      continue
+                  for j in range(i + 1, min(i + 9, len(lines))):
+                      m1 = empty_re.match(lines[j])
+                      if m1:
+                          lines[j] = f'{m1.group(1)}"{pwd}"{m1.group(2)}'
+                          changed.append(f"{sm}:{j + 1}")
+                          dirty = True
+                          break
+                      m2 = null_re.match(lines[j])
+                      if m2:
+                          lines[j] = f'{m2.group(1)}const-string {m2.group(2)}, "{pwd}"{m2.group(3)}'
+                          changed.append(f"{sm}:{j + 1}")
+                          dirty = True
+                          break
+                      if "SharedPreferences;->getString(" in lines[j]:
+                          break
+              if dirty:
+                  sm.write_text("".join(lines))
+          print("Patched defaults:")
+          for c in changed:
+              print("  " + c)
+          if not changed:
+              print("ERROR: no KEY_REG_PASSWORD default found - dumping contexts:")
+              for sm in work.rglob("*.smali"):
+                  lines = sm.read_text().splitlines()
+                  for i, ln in enumerate(lines):
+                      if "KEY_REG_PASSWORD" in ln:
+                          print(f"--- {sm}:{i + 1} ---")
+                          print("\n".join(lines[max(0, i - 2):i + 10]))
+              sys.exit(1)
+          PYEOF
+          echo "patch script ready"
+
       - name: Build 10 clones
         env:
+          CLONE_REG_PASSWORD: ${{ secrets.CLONE_REG_PASSWORD }}
           CLONE_KEYSTORE_PASSWORD: ${{ secrets.CLONE_KEYSTORE_PASSWORD }}
           CLONE_KEY_ALIAS: ${{ secrets.CLONE_KEY_ALIAS }}
           CLONE_KEY_PASSWORD: ${{ secrets.CLONE_KEY_PASSWORD }}
@@ -77,6 +129,11 @@ jobs:
             apktool d -f -o work original.apk > /dev/null
             sed -i "s/package=\"com\.dgd\.createfb\"/package=\"com.dgd.createfbc${i}\"/" work/AndroidManifest.xml
             sed -i "s/DGDcreateFB/DGDcreateFB ${i}/g" work/AndroidManifest.xml
+            if [ -n "$CLONE_REG_PASSWORD" ]; then
+              python3 "$RUNNER_TEMP/patch_pw.py" work
+            else
+              echo "No CLONE_REG_PASSWORD secret - clones start with empty password"
+            fi
             grep -q "com.dgd.createfbc${i}" work/AndroidManifest.xml
             apktool b work -o "clones/unsigned-${i}.apk" > /dev/null
             "$BT/zipalign" -f 4 "clones/unsigned-${i}.apk" "clones/aligned-${i}.apk"
