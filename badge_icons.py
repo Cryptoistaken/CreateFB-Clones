@@ -162,13 +162,12 @@ def main(argv=None):
     parser.add_argument("--dir", help="apktool decode dir: badge all res icons")
     parser.add_argument("--number", dest="dir_number", type=int,
                         help="badge number 1-10 (with --dir)")
-    parser.add_argument("--preview", help="write 1-10 contact sheet to this path")
+    parser.add_argument("--preview", nargs=2, metavar=("ICON", "OUTPUT"),
+                        help="write 1-10 contact sheet: --preview icon.png out.png")
     args = parser.parse_args(argv)
 
     if args.preview:
-        if not args.icon:
-            parser.error("--preview needs an input icon")
-        print(render_preview(args.icon, args.preview))
+        print(render_preview(args.preview[0], args.preview[1]))
     elif args.dir:
         if args.dir_number is None:
             parser.error("--dir needs --number")

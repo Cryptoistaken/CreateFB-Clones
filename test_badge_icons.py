@@ -175,6 +175,15 @@ class BadgeTest(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 main(["--dir", tmp, "--number", "2"])
 
+    def test_cli_preview_sheet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = str(Path(tmp) / "icon.png")
+            out = str(Path(tmp) / "preview.png")
+            make_icon().save(src)
+            self.assertEqual(main(["--preview", src, out]), 0)
+            with Image.open(out) as img:
+                self.assertEqual(img.size, (1500, 660))
+
 
 if __name__ == "__main__":
     unittest.main()
