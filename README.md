@@ -1,4 +1,4 @@
-# CreateFB Clones
+# DGDClone
 
 CI that turns `original.apk` (`DGDcreateFB`, `com.dgd.createfb`) into **10 apps
 that install side-by-side** with no external cloner:
