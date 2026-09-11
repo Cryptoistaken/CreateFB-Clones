@@ -8,12 +8,16 @@ package id, badged label, new signature, patched dex) trips
 securityBlock(), which posts a delayed NullPointerException crash on
 the main looper a few seconds after launch.
 
-Fix: replace the three method bodies with `return false` (0).
-MainActivity.onCreate treats 0 as "proceed" (if-nez -> continue to
-setContentView), so clones boot into the normal UI with no delayed
-crash. Smali classes are deliberately NOT renamed, so the hardcoded
+Fix: replace the three method bodies with `return true` (1).
+Verified on-device: with gates returning 1, onCreate reaches
+setContentView and the full UI renders (dashboard + WebView); with
+gates returning 0, onCreate takes an early-return path that leaves a
+blank white screen (decor + action bar only, empty android:id/content).
+So 1 = "pass/proceed" here - do NOT "simplify" this to 0.
+Smali classes are deliberately NOT renamed, so the hardcoded
 Class.forName("com.dgd.createfb.*") lookups keep resolving with a
-manifest-only package rename.
+manifest-only package rename (components are pinned to fully-qualified
+names in clone.yml for the same reason).
 
 Usage: python3 patch_gates.py <apktool-decode-dir>
 Fails loudly if any gate method is not found (apktool version skew).
@@ -29,7 +33,7 @@ GATE_METHODS = (
     "securityBlock(Ljava/lang/String;)Z",
 )
 
-PATCHED_BODY = ".locals 1\n    const/4 v0, 0x0\n    return v0\n"
+PATCHED_BODY = ".locals 1\n    const/4 v0, 0x1\n    return v0\n"
 
 
 def patch_smali(smali: pathlib.Path) -> None:
