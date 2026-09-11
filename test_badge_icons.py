@@ -1,7 +1,9 @@
 """Tests for badge_icons.py (run: python3 -m unittest discover -s . -p 'test_*.py')."""
 
 import math
+import tempfile
 import unittest
+from pathlib import Path
 
 from PIL import Image
 
@@ -11,6 +13,7 @@ from badge_icons import (
     add_number_badge,
     badge_box,
     badge_content_description,
+    main,
 )
 
 SIZE = 512
@@ -153,6 +156,24 @@ class BadgeTest(unittest.TestCase):
     def test_non_square_icon_rejected(self):
         with self.assertRaises(ValueError):
             add_number_badge(Image.new("RGBA", (256, 128)), 3)
+
+    def test_cli_dir_badges_all_densities(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for density in ("drawable-mdpi-v4", "drawable-xxhdpi-v4"):
+                d = Path(tmp) / "res" / density
+                d.mkdir(parents=True)
+                make_icon().save(d / "ic_launcher.png")
+            with self.assertRaises(SystemExit):
+                main(["--dir", tmp])  # missing --number
+            self.assertEqual(main(["--dir", tmp, "--number", "4"]), 0)
+            for density in ("drawable-mdpi-v4", "drawable-xxhdpi-v4"):
+                with Image.open(Path(tmp) / "res" / density / "ic_launcher.png") as img:
+                    self.assertTrue(changed_pixels(make_icon(), img.convert("RGBA")))
+
+    def test_cli_dir_missing_icons_fails_loudly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                main(["--dir", tmp, "--number", "2"])
 
 
 if __name__ == "__main__":
