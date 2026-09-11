@@ -81,9 +81,9 @@ jobs:
             apktool b work -o "clones/unsigned-${i}.apk" > /dev/null
             "$BT/zipalign" -f 4 "clones/unsigned-${i}.apk" "clones/aligned-${i}.apk"
             "$BT/apksigner" sign --ks "$KS" \
-              --ks-pass:env:CLONE_KEYSTORE_PASSWORD \
+              --ks-pass "$CLONE_KEYSTORE_PASSWORD" \
               --ks-key-alias "$CLONE_KEY_ALIAS" \
-              --key-pass:env:CLONE_KEY_PASSWORD \
+              --key-pass "$CLONE_KEY_PASSWORD" \
               --out "clones/CreateFB-${i}.apk" "clones/aligned-${i}.apk"
             rm -f "clones/unsigned-${i}.apk" "clones/aligned-${i}.apk"
           done
