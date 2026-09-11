@@ -61,52 +61,79 @@ jobs:
       - name: Write password pre-fill script
         run: |
           cat > "$RUNNER_TEMP/patch_pw.py" <<'PYEOF'
-          # Pre-fills the password default inside the getSavedRegPassword /
-          # getSavedPassword getters so every fresh clone starts with the
-          # configured password already set.
+          # Pre-fills the password default at every SharedPreferences.getString
+          # call that reads the "reg_password" key (directly, or via the
+          # KEY_REG_PASSWORD static field / its synthetic accessors).
           import os, re, sys, pathlib
           work = pathlib.Path(sys.argv[1])
           pwd = os.environ.get("CLONE_REG_PASSWORD", "")
           assert pwd, "CLONE_REG_PASSWORD is empty"
           assert re.fullmatch(r"[A-Za-z0-9_.-]+", pwd), "password has smali-unsafe chars"
-          meth_re = re.compile(r"\.method\s+\S*\s*(\S*(?:getSavedRegPassword|getSavedPassword|RegPassword)\([^)]*\))\s*$")
-          empty_re = re.compile(r'(\s*const-string\s+(\S+),\s*)""(\s*)$')
-          changed = []
-          seen_methods = []
-          for sm in sorted(work.rglob("*.smali")):
-              lines = sm.read_text().splitlines(keepends=True)
+          meth_start = re.compile(r"\.method\s+(?:\S+\s+)?(\S+\([^)]*\)\S*)\s*$")
+          accessor_of_key = set()
+          files = sorted(work.rglob("*.smali"))
+          # Pass 1: synthetic accessors that return KEY_REG_PASSWORD.
+          for sm in files:
+              lines = sm.read_text().splitlines()
               i = 0
               while i < len(lines):
-                  m = meth_re.match(lines[i])
-                  if not m:
-                      i += 1
+                  m = meth_start.match(lines[i])
+                  if m and "access$" in m.group(1) and m.group(1).endswith(")Ljava/lang/String;"):
+                      j = i + 1
+                      while j < len(lines) and ".end method" not in lines[j]:
+                          if ";->KEY_REG_PASSWORD:" in lines[j] and "sget-object" in lines[j]:
+                              accessor_of_key.add(m.group(1))
+                              break
+                          j += 1
+                      i = j
+                  i += 1
+          print("Key accessors:", sorted(accessor_of_key) or "NONE")
+          def is_key_source(ln):
+              if ";->KEY_REG_PASSWORD:" in ln and "sget-object" in ln:
+                  return True
+              if re.match(r'\s*const-string\s+\S+,\s*"reg_password"\s*$', ln):
+                  return True
+              for acc in accessor_of_key:
+                  if acc in ln and "invoke-static" in ln:
+                      return True
+              return False
+          empty_re = re.compile(r'(\s*const-string\s+\S+,\s*)""(\s*)$')
+          changed, key_hits, getstr_n = [], [], 0
+          for sm in files:
+              raw = sm.read_text().splitlines(keepends=True)
+              dirty = False
+              for i, ln in enumerate(raw):
+                  if "SharedPreferences;->getString(" in ln:
+                      getstr_n += 1
+                  if not is_key_source(ln):
                       continue
-                  j = i + 1
-                  while j < len(lines) and ".end method" not in lines[j]:
-                      j += 1
-                  body = lines[i:j + 1]
-                  seen_methods.append(f"{sm}:{i + 1} {m.group(1)}")
-                  print(f"--- getter {sm}:{i + 1} {m.group(1)} ---")
-                  print("".join(body))
-                  has_get = any("SharedPreferences;->getString(" in ln for ln in body)
-                  empties = [k for k, ln in enumerate(body) if empty_re.match(ln)]
-                  if has_get and len(empties) == 1:
-                      k = empties[0]
-                      e = empty_re.match(body[k])
-                      body[k] = f'{e.group(1)}"{pwd}"{e.group(3)}'
-                      lines[i:j + 1] = body
-                      sm.write_text("".join(lines))
-                      lines = sm.read_text().splitlines(keepends=True)
-                      changed.append(f"{sm}:{i + 1 + k}")
-                  i = j + 1
+                  key_hits.append(f"{sm}:{i + 1}: {ln.strip()}")
+                  for j in range(i + 1, min(i + 13, len(raw))):
+                      m1 = empty_re.match(raw[j])
+                      if m1:
+                          raw[j] = f'{m1.group(1)}"{pwd}"{m1.group(2)}'
+                          changed.append(f"{sm}:{j + 1}")
+                          dirty = True
+                          break
+                      if "SharedPreferences;->getString(" in raw[j]:
+                          break
+              if dirty:
+                  sm.write_text("".join(raw))
+          print(f"Key sources hit: {len(key_hits)}")
+          for h in key_hits[:20]:
+              print("  " + h)
+          print(f"SharedPreferences.getString sites: {getstr_n}")
           print("Patched defaults:")
           for c in changed:
               print("  " + c)
-          if not seen_methods:
-              print("ERROR: no password getter method found")
-              sys.exit(1)
           if not changed:
-              print("ERROR: getters found but no single empty default to patch (see dumps above)")
+              print("ERROR: no default patched - dumping getString contexts:")
+              for sm in files:
+                  lines = sm.read_text().splitlines()
+                  for i, ln in enumerate(lines):
+                      if "SharedPreferences;->getString(" in ln:
+                          print(f"--- {sm}:{i + 1} ---")
+                          print("\n".join(lines[max(0, i - 12):i + 3]))
               sys.exit(1)
           PYEOF
           echo "patch script ready"
