@@ -10,7 +10,7 @@ name: Build clones
 on:
   push:
     branches: ["master"]
-    paths: ["original.apk", "badge_icons.py", ".github/workflows/clone.yml"]
+    paths: ["original.apk", "badge_icons.py", "patch_gates.py", ".github/workflows/clone.yml"]
   workflow_dispatch:
 
 jobs:
