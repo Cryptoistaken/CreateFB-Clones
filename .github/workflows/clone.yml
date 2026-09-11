@@ -108,15 +108,24 @@ jobs:
                   if not is_key_source(ln):
                       continue
                   key_hits.append(f"{sm}:{i + 1}: {ln.strip()}")
+                  # Patch only if an empty default feeds a getString call below
+                  # (never touch putString/clear paths).
+                  empty_at, getstr_at = None, None
                   for j in range(i + 1, min(i + 13, len(raw))):
-                      m1 = empty_re.match(raw[j])
-                      if m1:
-                          raw[j] = f'{m1.group(1)}"{pwd}"{m1.group(2)}'
-                          changed.append(f"{sm}:{j + 1}")
-                          dirty = True
-                          break
+                      if empty_at is None and empty_re.match(raw[j]):
+                          empty_at = j
                       if "SharedPreferences;->getString(" in raw[j]:
+                          getstr_at = j
                           break
+                      if ".end method" in raw[j]:
+                          break
+                  if empty_at is not None and getstr_at is not None and empty_at < getstr_at:
+                      m1 = empty_re.match(raw[empty_at])
+                      raw[empty_at] = f'{m1.group(1)}"{pwd}"{m1.group(2)}'
+                      changed.append(f"{sm}:{empty_at + 1} (getString @{getstr_at + 1})")
+                      print(f"--- patched context {sm}:{empty_at + 1} ---")
+                      print("".join(raw[max(0, empty_at - 6):getstr_at + 2]))
+                      dirty = True
               if dirty:
                   sm.write_text("".join(raw))
           print(f"Key sources hit: {len(key_hits)}")
