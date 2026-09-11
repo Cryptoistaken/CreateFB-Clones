@@ -61,50 +61,52 @@ jobs:
       - name: Write password pre-fill script
         run: |
           cat > "$RUNNER_TEMP/patch_pw.py" <<'PYEOF'
-          # Pre-fills the default for prefs.getString("KEY_REG_PASSWORD", <default>)
-          # so every fresh clone starts with the configured password already set.
+          # Pre-fills the password default inside the getSavedRegPassword /
+          # getSavedPassword getters so every fresh clone starts with the
+          # configured password already set.
           import os, re, sys, pathlib
           work = pathlib.Path(sys.argv[1])
           pwd = os.environ.get("CLONE_REG_PASSWORD", "")
           assert pwd, "CLONE_REG_PASSWORD is empty"
-          key_re = re.compile(r'\s*const-string\s+\S+,\s*"KEY_REG_PASSWORD"\s*$')
-          empty_re = re.compile(r'(\s*const-string\s+\S+,\s*)""(\s*)$')
-          null_re = re.compile(r'(\s*)const/4\s+(\S+),\s*0x0(\s*)$')
+          assert re.fullmatch(r"[A-Za-z0-9_.-]+", pwd), "password has smali-unsafe chars"
+          meth_re = re.compile(r"\.method\s+\S*\s*(\S*(?:getSavedRegPassword|getSavedPassword|RegPassword)\([^)]*\))\s*$")
+          empty_re = re.compile(r'(\s*const-string\s+(\S+),\s*)""(\s*)$')
           changed = []
-          for sm in work.rglob("*.smali"):
+          seen_methods = []
+          for sm in sorted(work.rglob("*.smali")):
               lines = sm.read_text().splitlines(keepends=True)
-              dirty = False
-              for i, ln in enumerate(lines):
-                  if not key_re.match(ln):
+              i = 0
+              while i < len(lines):
+                  m = meth_re.match(lines[i])
+                  if not m:
+                      i += 1
                       continue
-                  for j in range(i + 1, min(i + 9, len(lines))):
-                      m1 = empty_re.match(lines[j])
-                      if m1:
-                          lines[j] = f'{m1.group(1)}"{pwd}"{m1.group(2)}'
-                          changed.append(f"{sm}:{j + 1}")
-                          dirty = True
-                          break
-                      m2 = null_re.match(lines[j])
-                      if m2:
-                          lines[j] = f'{m2.group(1)}const-string {m2.group(2)}, "{pwd}"{m2.group(3)}'
-                          changed.append(f"{sm}:{j + 1}")
-                          dirty = True
-                          break
-                      if "SharedPreferences;->getString(" in lines[j]:
-                          break
-              if dirty:
-                  sm.write_text("".join(lines))
+                  j = i + 1
+                  while j < len(lines) and ".end method" not in lines[j]:
+                      j += 1
+                  body = lines[i:j + 1]
+                  seen_methods.append(f"{sm}:{i + 1} {m.group(1)}")
+                  print(f"--- getter {sm}:{i + 1} {m.group(1)} ---")
+                  print("".join(body))
+                  has_get = any("SharedPreferences;->getString(" in ln for ln in body)
+                  empties = [k for k, ln in enumerate(body) if empty_re.match(ln)]
+                  if has_get and len(empties) == 1:
+                      k = empties[0]
+                      e = empty_re.match(body[k])
+                      body[k] = f'{e.group(1)}"{pwd}"{e.group(3)}'
+                      lines[i:j + 1] = body
+                      sm.write_text("".join(lines))
+                      lines = sm.read_text().splitlines(keepends=True)
+                      changed.append(f"{sm}:{i + 1 + k}")
+                  i = j + 1
           print("Patched defaults:")
           for c in changed:
               print("  " + c)
+          if not seen_methods:
+              print("ERROR: no password getter method found")
+              sys.exit(1)
           if not changed:
-              print("ERROR: no KEY_REG_PASSWORD default found - dumping contexts:")
-              for sm in work.rglob("*.smali"):
-                  lines = sm.read_text().splitlines()
-                  for i, ln in enumerate(lines):
-                      if "KEY_REG_PASSWORD" in ln:
-                          print(f"--- {sm}:{i + 1} ---")
-                          print("\n".join(lines[max(0, i - 2):i + 10]))
+              print("ERROR: getters found but no single empty default to patch (see dumps above)")
               sys.exit(1)
           PYEOF
           echo "patch script ready"
