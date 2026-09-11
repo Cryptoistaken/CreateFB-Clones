@@ -88,7 +88,7 @@ jobs:
             rm -f "clones/unsigned-${i}.apk" "clones/aligned-${i}.apk"
           done
           echo "--- verify ---"
-          "$BT/apksigner" verify clones/CreateFB-*.apk
+          for f in clones/CreateFB-*.apk; do "$BT/apksigner" verify "$f"; done
           "$BT/aapt" dump badging clones/CreateFB-1.apk | head -n 2
           "$BT/aapt" dump badging clones/CreateFB-10.apk | head -n 2
           ls -lh clones/
