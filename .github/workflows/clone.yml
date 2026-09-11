@@ -1,0 +1,106 @@
+name: Build clones
+
+# Takes original.apk and produces 10 side-by-side installable clones:
+#   package com.dgd.createfb   -> com.dgd.createfbc1 ... com.dgd.createfbc10
+#   label   DGDcreateFB        -> DGDcreateFB 1 ... DGDcreateFB 10
+# All clones share one signature so they install next to each other
+# (and next to the original) with no external cloner app.
+
+on:
+  push:
+    branches: ["master"]
+    paths: ["original.apk", ".github/workflows/clone.yml"]
+  workflow_dispatch:
+
+jobs:
+  clones:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install build-tools + apktool
+        run: |
+          sdkmanager "build-tools;36.0.0" --sdk_root=$ANDROID_HOME
+          sudo wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool -O /usr/local/bin/apktool
+          sudo wget -q https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.11.1.jar -O /usr/local/bin/apktool.jar
+          sudo chmod +x /usr/local/bin/apktool
+          apktool --version
+
+      - name: Restore signing keystore
+        env:
+          CLONE_KEYSTORE_B64: ${{ secrets.CLONE_KEYSTORE_B64 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ks"
+          if [ -n "$CLONE_KEYSTORE_B64" ]; then
+            echo "$CLONE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/ks/clone.jks"
+            echo "Using persistent signing key (updates install over previous clones)"
+          else
+            echo "No CLONE_KEYSTORE_B64 secret - generating throwaway key (clones will need reinstall on next build)"
+            keytool -genkeypair -keystore "$RUNNER_TEMP/ks/clone.jks" -alias clone \
+              -keyalg RSA -keysize 2048 -validity 10950 \
+              -storepass android -keypass android -dname "CN=Clone"
+          fi
+
+      - name: Build 10 clones
+        env:
+          CLONE_KEYSTORE_PASSWORD: ${{ secrets.CLONE_KEYSTORE_PASSWORD }}
+          CLONE_KEY_ALIAS: ${{ secrets.CLONE_KEY_ALIAS }}
+          CLONE_KEY_PASSWORD: ${{ secrets.CLONE_KEY_PASSWORD }}
+        run: |
+          set -e
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          KS="$RUNNER_TEMP/ks/clone.jks"
+          : "${CLONE_KEYSTORE_PASSWORD:=android}"
+          : "${CLONE_KEY_ALIAS:=clone}"
+          : "${CLONE_KEY_PASSWORD:=$CLONE_KEYSTORE_PASSWORD}"
+          mkdir -p clones
+          for i in $(seq 1 10); do
+            echo "=== Clone $i: com.dgd.createfbc${i} / DGDcreateFB ${i} ==="
+            rm -rf work
+            apktool d -f -o work original.apk > /dev/null
+            sed -i "s/package=\"com\.dgd\.createfb\"/package=\"com.dgd.createfbc${i}\"/" work/AndroidManifest.xml
+            sed -i "s/DGDcreateFB/DGDcreateFB ${i}/g" work/AndroidManifest.xml
+            grep -q "com.dgd.createfbc${i}" work/AndroidManifest.xml
+            apktool b work -o "clones/unsigned-${i}.apk" > /dev/null
+            "$BT/zipalign" -f 4 "clones/unsigned-${i}.apk" "clones/aligned-${i}.apk"
+            "$BT/apksigner" sign --ks "$KS" \
+              --ks-pass:env:CLONE_KEYSTORE_PASSWORD \
+              --ks-key-alias "$CLONE_KEY_ALIAS" \
+              --key-pass:env:CLONE_KEY_PASSWORD \
+              --out "clones/CreateFB-${i}.apk" "clones/aligned-${i}.apk"
+            rm -f "clones/unsigned-${i}.apk" "clones/aligned-${i}.apk"
+          done
+          echo "--- verify ---"
+          "$BT/apksigner" verify clones/CreateFB-*.apk
+          "$BT/aapt" dump badging clones/CreateFB-1.apk | head -n 2
+          "$BT/aapt" dump badging clones/CreateFB-10.apk | head -n 2
+          ls -lh clones/
+
+      - name: Upload clones
+        uses: actions/upload-artifact@v4
+        with:
+          name: clones
+          path: clones/CreateFB-*.apk
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'branch' && github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: clones-v${{ github.run_number }}
+          name: clones-v${{ github.run_number }}
+          body: "10 side-by-side clones of DGDcreateFB (1-10). Install any/all next to each other."
+          files: clones/CreateFB-*.apk
